@@ -1,0 +1,330 @@
+{
+  "parameters": {
+    "logicAppName": {
+      "type": "string",
+      "metadata": {
+        "description": "Name of the Logic App workflow"
+      }
+    },
+    "devOpsProject": {
+      "type": "string",
+      "metadata": {
+        "description": "Azure DevOps project name"
+      }
+    },
+    "devOpsOrganization": {
+      "type": "string",
+      "metadata": {
+        "description": "Azure DevOps organization name"
+      }
+    },
+    "lawWorkspaceId": {
+      "type": "string",
+      "metadata": {
+        "description": "Log Analytics Workspace ID (GUID)"
+      }
+    },
+    "location": {
+      "type": "string",
+      "defaultValue": "eastus",
+      "metadata": {
+        "description": "Azure region for deployment"
+      }
+    },
+    "devOpsAssignee": {
+      "type": "string",
+      "metadata": {
+        "description": "Email address for DevOps work item assignee"
+      }
+    },
+    "emailRecipient": {
+      "type": "string",
+      "metadata": {
+        "description": "Email address for alert notifications"
+      }
+    },
+    "teamsGroupId": {
+      "type": "string",
+      "metadata": {
+        "description": "Microsoft Teams Group ID"
+      }
+    },
+    "teamsChannelId": {
+      "type": "string",
+      "metadata": {
+        "description": "Microsoft Teams Channel ID"
+      }
+    },
+    "scheduleTimeZone": {
+      "type": "string",
+      "defaultValue": "Korea Standard Time",
+      "metadata": {
+        "description": "Time zone for scheduled execution"
+      }
+    },
+    "scheduleHour": {
+      "type": "string",
+      "defaultValue": "7",
+      "metadata": {
+        "description": "Hour of day for scheduled execution (0-23)"
+      }
+    }
+  },
+  "resources": [
+    {
+      "location": "[parameters('location')]",
+      "type": "Microsoft.Web/connections",
+      "properties": {
+        "displayName": "Teams Connection",
+        "customParameterValues": {},
+        "api": {
+          "id": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', parameters('location'), '/managedApis/teams')]"
+        }
+      },
+      "apiVersion": "2016-06-01",
+      "name": "teams"
+    },
+    {
+      "location": "[parameters('location')]",
+      "type": "Microsoft.Web/connections",
+      "properties": {
+        "displayName": "Outlook Connection",
+        "customParameterValues": {},
+        "api": {
+          "id": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', parameters('location'), '/managedApis/office365')]"
+        }
+      },
+      "apiVersion": "2016-06-01",
+      "name": "outlook"
+    },
+    {
+      "location": "[parameters('location')]",
+      "type": "Microsoft.Web/connections",
+      "properties": {
+        "displayName": "Azure DevOps Connection",
+        "customParameterValues": {},
+        "api": {
+          "id": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', parameters('location'), '/managedApis/visualstudioteamservices')]"
+        }
+      },
+      "apiVersion": "2016-06-01",
+      "name": "visualstudioteamservices"
+    },
+    {
+      "type": "Microsoft.Logic/workflows",
+      "location": "[parameters('location')]",
+      "properties": {
+        "definition": {
+          "parameters": {
+            "$connections": {
+              "defaultValue": {},
+              "type": "Object"
+            }
+          },
+          "actions": {
+            "Condition_Check_Errors": {
+              "type": "If",
+              "actions": {
+                "Create_DevOps_Work_Item": {
+                  "type": "ApiConnection",
+                  "inputs": {
+                    "host": {
+                      "connection": {
+                        "name": "@parameters('$connections')['visualstudioteamservices']['connectionId']"
+                      }
+                    },
+                    "path": "[concat('/v3/workitems/create/@{encodeURIComponent(''', parameters('devOpsProject'), ''')}/Issue')]",
+                    "body": {
+                      "description": "<h2>APIM Monitoring Alert</h2>\n<p><strong>Error Count:</strong> @{length(body('Query_APIM_Logs')?['tables']?[0]?['rows'])}</p>\n<p><strong>Time:</strong> @{utcNow()}</p>\n<p><strong>Query Period:</strong> Last 5 minutes</p>\n<br/>\n<p>Please check Azure Portal and Log Analytics for detailed error information.</p>",
+                      "priority": 1,
+                      "tags": "APIM;Monitoring;Auto-Generated",
+                      "title": "APIM Error Alert - @{utcNow()}"
+                    },
+                    "method": "patch"
+                  },
+                  "runAfter": {
+                    "Send_Email_Alert": [
+                      "Succeeded"
+                    ]
+                  }
+                },
+                "Send_Email_Alert": {
+                  "type": "ApiConnection",
+                  "inputs": {
+                    "host": {
+                      "connection": {
+                        "name": "@parameters('$connections')['outlook']['connectionId']"
+                      }
+                    },
+                    "path": "/v2/Mail",
+                    "body": {
+                      "To": "[parameters('emailRecipient')]",
+                      "Importance": "High",
+                      "Body": "<h2>APIM Error Alert</h2>\n<p>Errors detected: @{length(body('Query_APIM_Logs')?['tables']?[0]?['rows'])}</p>\n<p>Time: @{utcNow()}</p>",
+                      "Subject": "APIM AOAI Monitoring Alert"
+                    },
+                    "method": "post"
+                  },
+                  "runAfter": {
+                    "Post_Teams_Notification": [
+                      "Succeeded"
+                    ]
+                  }
+                },
+                "Post_Teams_Notification": {
+                  "type": "ApiConnection",
+                  "inputs": {
+                    "host": {
+                      "connection": {
+                        "name": "@parameters('$connections')['teams']['connectionId']"
+                      }
+                    },
+                    "path": "/beta/teams/conversation/message/poster/Flow bot/location/@{encodeURIComponent('Channel')}",
+                    "body": {
+                      "recipient": {
+                        "groupId": "[parameters('teamsGroupId')]",
+                        "channelId": "[parameters('teamsChannelId')]"
+                      },
+                      "messageBody": "<h2>🚨 APIM Error Alert</h2>\n<p><strong>Errors detected in the last 5 minutes</strong></p>\n<p>Total Errors: @{length(body('Query_APIM_Logs')?['tables']?[0]?['rows'])}</p>\n<p>Check Azure Portal for details</p>"
+                    },
+                    "method": "post"
+                  },
+                  "runAfter": {}
+                }
+              },
+              "expression": {
+                "and": [
+                  {
+                    "greater": [
+                      "@length(body('Query_APIM_Logs')?['tables']?[0]?['rows'])",
+                      0
+                    ]
+                  }
+                ]
+              },
+              "runAfter": {
+                "Query_APIM_Logs": [
+                  "Succeeded"
+                ]
+              }
+            },
+            "Query_APIM_Logs": {
+              "type": "Http",
+              "inputs": {
+                "uri": "[concat('https://api.loganalytics.io/v1/workspaces/', parameters('lawWorkspaceId'), '/query')]",
+                "authentication": {
+                  "audience": "https://api.loganalytics.io",
+                  "type": "ManagedServiceIdentity"
+                },
+                "body": {
+                  "query": "ApiManagementGatewayLogs\n| where TimeGenerated > ago(24h)\n| extend KST = TimeGenerated + 9h\n| where ResponseCode != 200\n| project KST, TimeGenerated, CorrelationId, ApiId, OperationId, ResponseCode, BackendResponseCode, CallerIpAddress, Method, Url, LastErrorMessage\n| order by TimeGenerated desc\n| take 50"
+                },
+                "method": "POST"
+              },
+              "runAfter": {}
+            },
+            "Create_DevOps_Work_Item_HTTP": {
+              "type": "Http",
+              "inputs": {
+                "method": "POST",
+                "uri": "[concat('https://dev.azure.com/', parameters('devOpsOrganization'), '/', parameters('devOpsProject'), '/_apis/wit/workitems/$Issue?api-version=7.0')]",
+                "headers": {
+                  "Content-Type": "application/json-patch+json"
+                },
+                "authentication": {
+                  "type": "ManagedServiceIdentity"
+                },
+                "body": [
+                  {
+                    "op": "add",
+                    "path": "/fields/System.Title",
+                    "value": "@{concat('APIM 에러 감지 - ', body('Query_APIM_Logs')?['tables']?[0]?['rows']?[0]?[4], ' 에러 발생')}"
+                  },
+                  {
+                    "op": "add",
+                    "path": "/fields/System.Description",
+                    "value": "@{concat('<h2>🔴 APIM 에러 알림</h2><table border=\"1\" cellpadding=\"5\"><tr><th>항목</th><th>값</th></tr><tr><td><b>발생 시간 (KST)</b></td><td>', body('Query_APIM_Logs')?['tables']?[0]?['rows']?[0]?[0], '</td></tr><tr><td><b>Response Code</b></td><td>', body('Query_APIM_Logs')?['tables']?[0]?['rows']?[0]?[4], '</td></tr><tr><td><b>URL</b></td><td>', body('Query_APIM_Logs')?['tables']?[0]?['rows']?[0]?[9], '</td></tr><tr><td><b>CorrelationId</b></td><td>', body('Query_APIM_Logs')?['tables']?[0]?['rows']?[0]?[2], '</td></tr><tr><td><b>Caller IP</b></td><td>', body('Query_APIM_Logs')?['tables']?[0]?['rows']?[0]?[7], '</td></tr><tr><td><b>Error Message</b></td><td>', body('Query_APIM_Logs')?['tables']?[0]?['rows']?[0]?[10], '</td></tr></table><br/><h3>총 감지된 에러: ', length(body('Query_APIM_Logs')?['tables']?[0]?['rows']), ' 건</h3>')}"
+                  },
+                  {
+                    "op": "add",
+                    "path": "/fields/System.AssignedTo",
+                    "value": "[parameters('devOpsAssignee')]"
+                  },
+                  {
+                    "op": "add",
+                    "path": "/fields/Microsoft.VSTS.Common.Priority",
+                    "value": 2
+                  },
+                  {
+                    "op": "add",
+                    "path": "/fields/Microsoft.VSTS.Common.Severity",
+                    "value": "2 - High"
+                  }
+                ]
+              },
+              "runAfter": {
+                "Condition_Check_Errors": [
+                  "Succeeded"
+                ]
+              }
+            }
+          },
+          "triggers": {
+            "Recurrence": {
+              "recurrence": {
+                "frequency": "Day",
+                "interval": 1,
+                "timeZone": "[parameters('scheduleTimeZone')]",
+                "schedule": {
+                  "hours": [
+                    "[parameters('scheduleHour')]"
+                  ],
+                  "minutes": [
+                    0
+                  ]
+                }
+              },
+              "type": "Recurrence"
+            }
+          },
+          "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+          "contentVersion": "1.0.0.0"
+        },
+        "state": "Enabled",
+        "parameters": {
+          "$connections": {
+            "value": {
+              "outlook": {
+                "connectionName": "outlook",
+                "id": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', parameters('location'), '/managedApis/office365')]",
+                "connectionId": "[resourceId('Microsoft.Web/connections', 'outlook')]"
+              },
+              "visualstudioteamservices": {
+                "connectionName": "visualstudioteamservices",
+                "id": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', parameters('location'), '/managedApis/visualstudioteamservices')]",
+                "connectionId": "[resourceId('Microsoft.Web/connections', 'visualstudioteamservices')]"
+              },
+              "teams": {
+                "connectionName": "teams",
+                "id": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', parameters('location'), '/managedApis/teams')]",
+                "connectionId": "[resourceId('Microsoft.Web/connections', 'teams')]"
+              }
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Web/connections', 'teams')]",
+        "[resourceId('Microsoft.Web/connections', 'outlook')]",
+        "[resourceId('Microsoft.Web/connections', 'visualstudioteamservices')]"
+      ],
+      "apiVersion": "2019-05-01",
+      "name": "[parameters('logicAppName')]",
+      "identity": {
+        "type": "SystemAssigned"
+      }
+    }
+  ],
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0"
+}

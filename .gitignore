@@ -1,23 +1,55 @@
-# Local .terraform directories
-**/.terraform/*
+# Sensitive Configuration Files
+parameters.json
+config.json
+.env
 
-# .tfstate files
+# Azure Credentials
+*.publishsettings
+*.subscription
+
+# Terraform
+**/.terraform/*
 *.tfstate
 *.tfstate.*
-
-# Crash log files
-crash.log
-crash.*.log
-
-# Exclude all .tfvars files, which might contain sensitive data
-# Comment this if you want to commit tfvars files (NOT RECOMMENDED for sensitive data)
-# *.tfvars
+*.tfvars
 *.tfvars.json
-
-# Ignore override files
+.terraform.lock.hcl
 override.tf
 override.tf.json
 *_override.tf
+*_override.tf.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+.venv
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.orig
 *_override.tf.json
 
 # Ignore CLI configuration files

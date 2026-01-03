@@ -1,0 +1,45 @@
+{
+  "Create_DevOps_Work_Item": {
+    "type": "Http",
+    "inputs": {
+      "method": "POST",
+      "uri": "https://dev.azure.com/azure-mvp/prj-ticketGEN-demo-20260103/_apis/wit/workitems/$Issue?api-version=7.0",
+      "headers": {
+        "Content-Type": "application/json-patch+json"
+      },
+      "authentication": {
+        "type": "ManagedServiceIdentity"
+      },
+      "body": [
+        {
+          "op": "add",
+          "path": "/fields/System.Title",
+          "value": "@{concat('APIM 에러 감지 - ', body('Query_APIM_Logs')?['tables']?[0]?['rows']?[0]?[4], ' 에러 발생')}"
+        },
+        {
+          "op": "add",
+          "path": "/fields/System.Description",
+          "value": "@{concat('<h2>🔴 APIM 에러 알림</h2><table border=\"1\" cellpadding=\"5\"><tr><th>항목</th><th>값</th></tr><tr><td><b>발생 시간 (KST)</b></td><td>', body('Query_APIM_Logs')?['tables']?[0]?['rows']?[0]?[0], '</td></tr><tr><td><b>Response Code</b></td><td>', body('Query_APIM_Logs')?['tables']?[0]?['rows']?[0]?[4], '</td></tr><tr><td><b>URL</b></td><td>', body('Query_APIM_Logs')?['tables']?[0]?['rows']?[0]?[9], '</td></tr><tr><td><b>CorrelationId</b></td><td>', body('Query_APIM_Logs')?['tables']?[0]?['rows']?[0]?[2], '</td></tr><tr><td><b>Caller IP</b></td><td>', body('Query_APIM_Logs')?['tables']?[0]?['rows']?[0]?[7], '</td></tr><tr><td><b>Error Message</b></td><td>', body('Query_APIM_Logs')?['tables']?[0]?['rows']?[0]?[10], '</td></tr></table><br/><h3>총 감지된 에러: ', length(body('Query_APIM_Logs')?['tables']?[0]?['rows']), ' 건</h3>')}"
+        },
+        {
+          "op": "add",
+          "path": "/fields/System.AssignedTo",
+          "value": "azure-mvp@zerobig.kr"
+        },
+        {
+          "op": "add",
+          "path": "/fields/Microsoft.VSTS.Common.Priority",
+          "value": 2
+        },
+        {
+          "op": "add",
+          "path": "/fields/Microsoft.VSTS.Common.Severity",
+          "value": "2 - High"
+        }
+      ]
+    },
+    "runAfter": {
+      "Condition_Check_Errors": ["Succeeded"]
+    }
+  }
+}

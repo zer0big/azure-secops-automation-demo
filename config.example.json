@@ -1,0 +1,24 @@
+{
+  "deployment": {
+    "resourceGroup": "YOUR-RESOURCE-GROUP-NAME",
+    "location": "eastus",
+    "logicAppName": "YOUR-LOGICAPP-NAME"
+  },
+  "azureDevOps": {
+    "organization": "YOUR-DEVOPS-ORG",
+    "project": "YOUR-DEVOPS-PROJECT",
+    "assignee": "YOUR-EMAIL@example.com"
+  },
+  "monitoring": {
+    "lawWorkspaceId": "YOUR-LOG-ANALYTICS-WORKSPACE-ID",
+    "lawWorkspaceName": "YOUR-LAW-NAME",
+    "apimServiceName": "YOUR-APIM-NAME"
+  },
+  "notification": {
+    "emailRecipients": [
+      "alert@example.com",
+      "ops@example.com"
+    ],
+    "teamsChannelId": "YOUR-TEAMS-CHANNEL-ID"
+  }
+}

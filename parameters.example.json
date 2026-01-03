@@ -1,0 +1,39 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "logicAppName": {
+      "value": "YOUR-LOGICAPP-NAME"
+    },
+    "devOpsProject": {
+      "value": "YOUR-DEVOPS-PROJECT"
+    },
+    "devOpsOrganization": {
+      "value": "YOUR-DEVOPS-ORG"
+    },
+    "lawWorkspaceId": {
+      "value": "YOUR-LOG-ANALYTICS-WORKSPACE-ID"
+    },
+    "location": {
+      "value": "eastus"
+    },
+    "devOpsAssignee": {
+      "value": "assignee@example.com"
+    },
+    "emailRecipient": {
+      "value": "alerts@example.com"
+    },
+    "teamsGroupId": {
+      "value": "YOUR-TEAMS-GROUP-ID"
+    },
+    "teamsChannelId": {
+      "value": "YOUR-TEAMS-CHANNEL-ID"
+    },
+    "scheduleTimeZone": {
+      "value": "Korea Standard Time"
+    },
+    "scheduleHour": {
+      "value": "7"
+    }
+  }
+}
