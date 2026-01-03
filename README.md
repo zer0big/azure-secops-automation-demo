@@ -15,7 +15,35 @@ Azure Logic Apps를 활용한 API Management 자동 모니터링 및 Azure DevOp
 - ✅ **REST API 직접 통합**: HTTP 액션을 통한 DevOps API 호출
 - ✅ **코드형 인프라**: ARM 템플릿 기반 배포
 
-## 📋 사전 요구사항
+## � 프로젝트 구조
+
+```
+azure-secops-automation-demo/
+├── docs/                          # 문서
+│   ├── ko/                        # 한글 문서
+│   │   ├── 아키텍처.md
+│   │   ├── 구현가이드.md
+│   │   ├── 운영가이드.md
+│   │   └── 빠른참조.md
+│   └── en/                        # 영문 문서
+│       ├── ARCHITECTURE.md
+│       ├── IMPLEMENTATION.md
+│       ├── MAINTENANCE.md
+│       └── DEVOPS-WORKITEM-GUIDE.md
+├── scripts/                       # 스크립트
+│   ├── generate-template.py      # ARM 템플릿 생성
+│   └── upload-wiki.ps1            # DevOps Wiki 업로드
+├── templates/                     # ARM 템플릿
+│   └── logicapp-deployment.json  # Logic App 배포 템플릿
+├── .env.example                   # 환경 변수 템플릿
+├── .gitignore                     # Git 제외 파일
+├── config.example.json            # 설정 파일 템플릿
+├── parameters.example.json        # 배포 매개변수 템플릿
+├── LICENSE.txt                    # MIT 라이선스
+└── README.md                      # 이 파일
+```
+
+## �📋 사전 요구사항
 
 - 리소스 생성 권한이 있는 Azure 구독
 - Azure DevOps 조직 및 프로젝트
@@ -58,7 +86,7 @@ az account set --subscription "구독-이름"
 
 az deployment group create \
   --resource-group "리소스-그룹명" \
-  --template-file logicapp-deployment.json \
+  --template-file templates/logicapp-deployment.json \
   --parameters @parameters.json \
   --name "LogicApp-Deploy-$(date +%Y%m%d%H%M%S)"
 ```
@@ -92,12 +120,17 @@ az role assignment create \
 
 ## 📚 문서
 
-상세 문서 제공:
+### 한글 문서
+- **[시스템 아키텍처](docs/ko/아키텍처.md)**: 시스템 설계 및 구성 요소 상세
+- **[구현 가이드](docs/ko/구현가이드.md)**: 개발 과정 및 배포 가이드
+- **[운영 가이드](docs/ko/운영가이드.md)**: 일일 운영 및 문제 해결
+- **[빠른 참조](docs/ko/빠른참조.md)**: 주요 명령어 및 팁
 
-- **[ARCHITECTURE.md](ARCHITECTURE.md)**: 시스템 설계 및 구성 요소 상세
-- **[IMPLEMENTATION.md](IMPLEMENTATION.md)**: 개발 과정 및 배포 가이드
-- **[MAINTENANCE.md](MAINTENANCE.md)**: 운영 및 문제 해결
-- **[WIKI.md](WIKI.md)**: 빠른 참조 및 운영 가이드
+### English Documentation
+- **[Architecture](docs/en/ARCHITECTURE.md)**: System design and components
+- **[Implementation Guide](docs/en/IMPLEMENTATION.md)**: Development and deployment
+- **[Operations Guide](docs/en/MAINTENANCE.md)**: Daily operations and troubleshooting
+- **[DevOps Integration](docs/en/DEVOPS-WORKITEM-GUIDE.md)**: Work item creation guide
 
 ## 🔧 구성
 
@@ -117,7 +150,7 @@ az role assignment create \
 ```
 
 ### 쿼리 커스터마이징
-[logicapp-deployment.json](logicapp-deployment.json)에서 KQL 쿼리 수정:
+[templates/logicapp-deployment.json](templates/logicapp-deployment.json)에서 KQL 쿼리 수정:
 ```kusto
 ApiManagementGatewayLogs
 | where TimeGenerated > ago(24h)
@@ -186,7 +219,7 @@ https://portal.azure.com → Logic Apps → 로직앱 선택 → 개요 → 실�
 - APIM 진단 설정 확인
 - 필요시 시간 범위 확대
 
-상세한 문제 해결은 [MAINTENANCE.md](MAINTENANCE.md) 참조.
+상세한 문제 해결은 [운영 가이드](docs/ko/운영가이드.md) 참조.
 
 ## 💰 비용 예상
 
