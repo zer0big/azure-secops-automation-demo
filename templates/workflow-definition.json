@@ -1,0 +1,166 @@
+{
+  "definition": {
+    "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+      "$connections": {
+        "defaultValue": {},
+        "type": "Object"
+      }
+    },
+    "triggers": {
+      "Recurrence": {
+        "type": "Recurrence",
+        "recurrence": {
+          "frequency": "Day",
+          "interval": 1,
+          "schedule": {
+            "hours": ["7"],
+            "minutes": [0]
+          },
+          "timeZone": "Korea Standard Time"
+        }
+      },
+      "manual": {
+        "type": "Request",
+        "kind": "Http",
+        "inputs": {
+          "schema": {}
+        }
+      }
+    },
+    "actions": {
+      "Query_APIM_Errors": {
+        "type": "Http",
+        "runAfter": {},
+        "inputs": {
+          "method": "POST",
+          "uri": "https://api.loganalytics.io/v1/workspaces/<your-law-workspace-id>/query",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "authentication": {
+            "type": "ManagedServiceIdentity",
+            "audience": "https://api.loganalytics.io"
+          },
+          "body": {
+            "query": "ApiManagementGatewayLogs | where TimeGenerated > ago(24h) | where ResponseCode >= 400 | extend KST = TimeGenerated + 9h | extend Category = case(ResponseCode >= 500, 'Server Error', ResponseCode == 404, 'Not Found', ResponseCode == 401 or ResponseCode == 403, 'Auth Error', ResponseCode == 429, 'Rate Limit', 'Client Error') | summarize ErrorCount = count() by Category, ResponseCode | order by ErrorCount desc"
+          }
+        }
+      },
+      "Parse_Query_Result": {
+        "type": "ParseJson",
+        "runAfter": {
+          "Query_APIM_Errors": ["Succeeded"]
+        },
+        "inputs": {
+          "content": "@body('Query_APIM_Errors')",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "tables": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "rows": { "type": "array" },
+                    "columns": { "type": "array" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "Check_Errors_Exist": {
+        "type": "If",
+        "runAfter": {
+          "Parse_Query_Result": ["Succeeded"]
+        },
+        "expression": {
+          "and": [
+            {
+              "greater": [
+                "@length(body('Parse_Query_Result')?['tables']?[0]?['rows'])",
+                0
+              ]
+            }
+          ]
+        },
+        "actions": {
+          "Send_Email": {
+            "type": "ApiConnection",
+            "runAfter": {},
+            "inputs": {
+              "host": {
+                "connection": {
+                  "name": "@parameters('$connections')['outlook']['connectionId']"
+                }
+              },
+              "method": "post",
+              "path": "/v2/Mail",
+              "body": {
+                "To": "azure-mvp@zerobig.kr",
+                "Subject": "[APIM Alert] @{formatDateTime(utcNow(), 'yyyy-MM-dd')} API 오류 감지",
+                "Body": "<html><body><h2>🚨 APIM 오류 알림</h2><p><strong>시간:</strong> @{formatDateTime(utcNow(), 'yyyy-MM-dd HH:mm')} UTC</p><p><strong>리소스:</strong> zbho-dw9-apim</p><h3>오류 요약</h3><p>최근 24시간 동안 API 오류가 감지되었습니다.</p><p>오류 종류 수: @{length(body('Parse_Query_Result')?['tables']?[0]?['rows'])}</p><h3>🔗 바로가기</h3><ul><li><a href=\"https://portal.azure.com/#resource/subscriptions/<your-subscription-id>/resourceGroups/RG-ZBHO-DW9-APIM-AOAI-DEMO/providers/Microsoft.ApiManagement/service/zbho-dw9-apim/overview\">APIM 포털</a></li><li><a href=\"https://portal.azure.com/#view/Microsoft_OperationsManagementSuite_Workspace/Logs.ReactView/resourceId/%2Fsubscriptions%2F<your-subscription-id>%2FresourceGroups%2FRG-ZBHO-DW9-APIM-AOAI-DEMO%2Fproviders%2FMicrosoft.OperationalInsights%2Fworkspaces%2Fzbho-dw9-law\">Log Analytics 쿼리</a></li><li><a href=\"https://portal.azure.com/#resource/subscriptions/<your-subscription-id>/resourceGroups/RG-ZBHO-DW9-APIM-AOAI-DEMO/providers/Microsoft.ApiManagement/service/zbho-dw9-apim/analytics\">APIM Analytics</a></li></ul></body></html>",
+                "Importance": "High",
+                "IsHtml": true
+              }
+            }
+          },
+          "Send_Teams_Message": {
+            "type": "ApiConnection",
+            "runAfter": {
+              "Send_Email": ["Succeeded"]
+            },
+            "inputs": {
+              "host": {
+                "connection": {
+                  "name": "@parameters('$connections')['teams']['connectionId']"
+                }
+              },
+              "method": "post",
+              "path": "/v3/beta/teams/<your-teams-group-id>/channels/19%3A32df97df94214adfa36ab24db8a1a9dc%40thread.tacv2/messages",
+              "body": {
+                "body": {
+                  "contentType": "html",
+                  "content": "<h2>🚨 APIM 오류 알림</h2><p><strong>시간:</strong> @{formatDateTime(utcNow(), 'yyyy-MM-dd HH:mm')} UTC</p><p><strong>오류 종류:</strong> @{length(body('Parse_Query_Result')?['tables']?[0]?['rows'])}개</p><p>📊 <a href=\"https://portal.azure.com/#view/Microsoft_OperationsManagementSuite_Workspace/Logs.ReactView/resourceId/%2Fsubscriptions%2F<your-subscription-id>%2FresourceGroups%2FRG-ZBHO-DW9-APIM-AOAI-DEMO%2Fproviders%2FMicrosoft.OperationalInsights%2Fworkspaces%2Fzbho-dw9-law\">Log Analytics에서 상세 확인</a></p>"
+                }
+              }
+            }
+          }
+        },
+        "else": {
+          "actions": {
+            "Log_No_Errors": {
+              "type": "Compose",
+              "runAfter": {},
+              "inputs": {
+                "status": "OK",
+                "message": "No errors found in the last 24 hours",
+                "checkedAt": "@{utcNow()}"
+              }
+            }
+          }
+        }
+      }
+    },
+    "outputs": {}
+  },
+  "parameters": {
+    "$connections": {
+      "value": {
+        "teams": {
+          "connectionId": "/subscriptions/<your-subscription-id>/resourceGroups/RG-ZBHO-DW9-APIM-AOAI-DEMO/providers/Microsoft.Web/connections/teams",
+          "connectionName": "teams",
+          "id": "/subscriptions/<your-subscription-id>/providers/Microsoft.Web/locations/eastus/managedApis/teams"
+        },
+        "outlook": {
+          "connectionId": "/subscriptions/<your-subscription-id>/resourceGroups/RG-ZBHO-DW9-APIM-AOAI-DEMO/providers/Microsoft.Web/connections/outlook",
+          "connectionName": "outlook",
+          "id": "/subscriptions/<your-subscription-id>/providers/Microsoft.Web/locations/eastus/managedApis/office365"
+        }
+      }
+    }
+  }
+}

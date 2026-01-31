@@ -1,0 +1,283 @@
+{
+  "parameters": {
+    "logicAppName": {
+      "defaultValue": "logicapp-apim-aoai-monitoring",
+      "type": "string"
+    },
+    "lawWorkspaceId": {
+      "defaultValue": "<your-law-workspace-id>",
+      "type": "string"
+    },
+    "location": {
+      "defaultValue": "eastus",
+      "type": "string"
+    }
+  },
+  "variables": {
+    "subscriptionId": "<your-subscription-id>",
+    "resourceGroupName": "RG-ZBHO-DW9-APIM-AOAI-DEMO",
+    "apimName": "zbho-dw9-apim",
+    "lawName": "zbho-dw9-law"
+  },
+  "resources": [
+    {
+      "location": "[parameters('location')]",
+      "type": "Microsoft.Web/connections",
+      "properties": {
+        "displayName": "Teams Connection",
+        "customParameterValues": {},
+        "api": {
+          "id": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', parameters('location'), '/managedApis/teams')]"
+        }
+      },
+      "apiVersion": "2016-06-01",
+      "name": "teams"
+    },
+    {
+      "location": "[parameters('location')]",
+      "type": "Microsoft.Web/connections",
+      "properties": {
+        "displayName": "Outlook Connection",
+        "customParameterValues": {},
+        "api": {
+          "id": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', parameters('location'), '/managedApis/office365')]"
+        }
+      },
+      "apiVersion": "2016-06-01",
+      "name": "outlook"
+    },
+    {
+      "location": "[parameters('location')]",
+      "type": "Microsoft.Web/connections",
+      "properties": {
+        "displayName": "Azure DevOps Connection",
+        "customParameterValues": {},
+        "api": {
+          "id": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', parameters('location'), '/managedApis/visualstudioteamservices')]"
+        }
+      },
+      "apiVersion": "2016-06-01",
+      "name": "visualstudioteamservices"
+    },
+    {
+      "type": "Microsoft.Logic/workflows",
+      "location": "[parameters('location')]",
+      "properties": {
+        "definition": {
+          "parameters": {
+            "$connections": {
+              "defaultValue": {},
+              "type": "Object"
+            }
+          },
+          "actions": {
+            "Query_APIM_Logs": {
+              "type": "Http",
+              "inputs": {
+                "uri": "[concat('https://api.loganalytics.io/v1/workspaces/', parameters('lawWorkspaceId'), '/query')]",
+                "authentication": {
+                  "audience": "https://api.loganalytics.io",
+                  "type": "ManagedServiceIdentity"
+                },
+                "body": {
+                  "query": "ApiManagementGatewayLogs\n| where TimeGenerated > ago(5m)\n| where ResponseCode >= 400\n| extend KST = TimeGenerated + 9h\n| extend ErrorCategory = case(\n    ResponseCode >= 500, '🔴 서버 에러',\n    ResponseCode == 404, '🟡 Not Found',\n    ResponseCode == 403, '🟠 Forbidden',\n    ResponseCode == 401, '🟠 Unauthorized',\n    ResponseCode == 429, '🟡 Too Many Requests',\n    '🔵 클라이언트 에러'\n)\n| project KST, ResponseCode, Url, CallerIpAddress, LastErrorMessage, ErrorCategory\n| order by KST desc\n| take 50"
+                },
+                "method": "POST"
+              },
+              "runAfter": {}
+            },
+            "Condition_Check_Errors": {
+              "type": "If",
+              "actions": {
+                "Compose_Error_Summary": {
+                  "type": "Compose",
+                  "inputs": {
+                    "TotalErrors": "@{length(body('Query_APIM_Logs')?['tables']?[0]?['rows'])}",
+                    "DetectionTimeKST": "@{addHours(utcNow(), 9)}",
+                    "FirstErrorTime": "@{if(greater(length(body('Query_APIM_Logs')?['tables']?[0]?['rows']), 0), body('Query_APIM_Logs')?['tables']?[0]?['rows']?[0]?[0], '')}",
+                    "FirstErrorCode": "@{if(greater(length(body('Query_APIM_Logs')?['tables']?[0]?['rows']), 0), body('Query_APIM_Logs')?['tables']?[0]?['rows']?[0]?[1], '')}",
+                    "FirstErrorUrl": "@{if(greater(length(body('Query_APIM_Logs')?['tables']?[0]?['rows']), 0), body('Query_APIM_Logs')?['tables']?[0]?['rows']?[0]?[2], '')}",
+                    "FirstErrorClient": "@{if(greater(length(body('Query_APIM_Logs')?['tables']?[0]?['rows']), 0), body('Query_APIM_Logs')?['tables']?[0]?['rows']?[0]?[3], '')}",
+                    "FirstErrorMessage": "@{if(greater(length(body('Query_APIM_Logs')?['tables']?[0]?['rows']), 0), coalesce(body('Query_APIM_Logs')?['tables']?[0]?['rows']?[0]?[4], 'No error message'), '')}",
+                    "PortalQueryLink": "[concat('https://portal.azure.com/#@azure-mvp.onmicrosoft.com/blade/Microsoft_Azure_Monitoring_Logs/LogsBlade/resourceId/%2Fsubscriptions%2F', variables('subscriptionId'), '%2FresourceGroups%2F', variables('resourceGroupName'), '%2Fproviders%2FMicrosoft.OperationalInsights%2Fworkspaces%2F', variables('lawName'), '/source/LogsBlade.AnalyticsShareLinkToQuery/query/ApiManagementGatewayLogs%0A%7C%20where%20TimeGenerated%20%3E%20ago(5m)%0A%7C%20where%20ResponseCode%20%3E%3D%20400%0A%7C%20extend%20KST%20%3D%20TimeGenerated%20%2B%209h%0A%7C%20project%20KST%2C%20ResponseCode%2C%20Url%2C%20CallerIpAddress%2C%20LastErrorMessage%0A%7C%20order%20by%20KST%20desc')]",
+                    "ApimPortalLink": "[concat('https://portal.azure.com/#@azure-mvp.onmicrosoft.com/resource/subscriptions/', variables('subscriptionId'), '/resourceGroups/', variables('resourceGroupName'), '/providers/Microsoft.ApiManagement/service/', variables('apimName'), '/overview')]",
+                    "ApimMetricsLink": "[concat('https://portal.azure.com/#@azure-mvp.onmicrosoft.com/resource/subscriptions/', variables('subscriptionId'), '/resourceGroups/', variables('resourceGroupName'), '/providers/Microsoft.ApiManagement/service/', variables('apimName'), '/metrics')]"
+                  },
+                  "runAfter": {}
+                },
+                "Send_Enhanced_Email": {
+                  "type": "ApiConnection",
+                  "inputs": {
+                    "host": {
+                      "connection": {
+                        "name": "@parameters('$connections')['outlook']['connectionId']"
+                      }
+                    },
+                    "path": "/v2/Mail",
+                    "body": {
+                      "To": "azure-mvp@zerobig.kr",
+                      "Importance": "High",
+                      "Body": "<html><head><style>body{font-family:'Segoe UI',sans-serif;background:#f4f4f4;padding:20px}.container{background:white;max-width:800px;margin:0 auto;padding:30px;border-radius:8px;box-shadow:0 2px 10px rgba(0,0,0,0.1)}.header{background:linear-gradient(135deg,#667eea,#764ba2);color:white;padding:25px;border-radius:8px 8px 0 0;margin:-30px -30px 20px}.header h1{margin:0;font-size:24px}.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:15px;margin:20px 0}.stat-box{background:#f8f9fa;padding:15px;border-radius:6px;border-left:4px solid #667eea}.stat-box h3{margin:0 0 8px;font-size:14px;color:#666}.stat-box p{margin:0;font-size:24px;font-weight:bold;color:#333}.error-details{background:#fff5f5;border:1px solid #feb2b2;border-radius:6px;padding:15px;margin:15px 0}.error-details h3{margin:0 0 10px;color:#c53030}.error-item{background:white;border-left:3px solid #fc8181;padding:10px;margin:8px 0;border-radius:4px}.error-item p{margin:5px 0;font-size:13px}.links{background:#e6f7ff;border:1px solid #91d5ff;border-radius:6px;padding:15px;margin:20px 0}.links a{color:#1890ff;text-decoration:none;font-weight:500;display:block;margin:8px 0;padding:8px;background:white;border-radius:4px}.links a:hover{background:#f0f8ff}table{width:100%;border-collapse:collapse;margin:15px 0}th,td{padding:12px;text-align:left;border-bottom:1px solid#ddd}th{background:#667eea;color:white}.code{background:#2d3748;color:#68d391;padding:3px 8px;border-radius:3px;font-family:monospace;font-size:13px}</style></head><body><div class='container'><div class='header'><h1>🚨 APIM 에러 알림 - 상세 분석</h1></div><div class='stats'><div class='stat-box'><h3>🔴 총 에러 수</h3><p>@{outputs('Compose_Error_Summary')['TotalErrors']} 건</p></div><div class='stat-box'><h3>📅 탐지 시간 (KST)</h3><p>@{formatDateTime(outputs('Compose_Error_Summary')['DetectionTimeKST'], 'MM-dd HH:mm')}</p></div><div class='stat-box'><h3>⏱️ 분석 기간</h3><p>최근 5분</p></div></div><h2>🔍 최근 에러 샘플 (상위 5건)</h2><div class='error-details'>@{join(take(select(body('Query_APIM_Logs')?['tables']?[0]?['rows'], concat('<div class=\"error-item\"><p><strong>🕐 ', string(item()[0]), '</strong></p><p><span class=\"code\">', string(item()[1]), '</span> ', string(item()[5]), '</p><p>🌐 <strong>URL:</strong> ', string(item()[2]), '</p><p>💻 <strong>Client:</strong> ', string(item()[3]), '</p><p>❌ <strong>Error:</strong> ', coalesce(string(item()[4]), 'No message'), '</p></div>')), 5), '')}</div><h2>📊 전체 에러 목록</h2><table><tr><th>시간(KST)</th><th>코드</th><th>URL</th><th>Client IP</th><th>분류</th></tr>@{join(select(body('Query_APIM_Logs')?['tables']?[0]?['rows'], concat('<tr><td>', string(item()[0]), '</td><td><span class=\"code\">', string(item()[1]), '</span></td><td>', string(item()[2]), '</td><td>', string(item()[3]), '</td><td>', string(item()[5]), '</td></tr>')), '')}</table><div class='links'><h3>🔗 상세 분석 도구</h3><a href='@{outputs('Compose_Error_Summary')['PortalQueryLink']}' target='_blank'>📊 Log Analytics에서 전체 쿼리 결과 보기</a><a href='@{outputs('Compose_Error_Summary')['ApimPortalLink']}' target='_blank'>🌐 APIM 리소스 관리</a><a href='@{outputs('Compose_Error_Summary')['ApimMetricsLink']}' target='_blank'>📈 APIM 메트릭 대시보드</a></div><p style='margin-top:30px;padding-top:20px;border-top:2px solid #eee;text-align:center;color:#666;font-size:12px'>이 알림은 APIM 모니터링 시스템에서 자동 생성되었습니다.</p></div></body></html>",
+                      "Subject": "🚨 APIM AOAI 알림 - @{outputs('Compose_Error_Summary')['TotalErrors']}건 에러 감지 (@{formatDateTime(outputs('Compose_Error_Summary')['DetectionTimeKST'], 'MM-dd HH:mm')})"
+                    },
+                    "method": "post"
+                  },
+                  "runAfter": {
+                    "Send_Enhanced_Teams_Message": [
+                      "Succeeded"
+                    ]
+                  }
+                },
+                "Send_Enhanced_Teams_Message": {
+                  "type": "ApiConnection",
+                  "inputs": {
+                    "host": {
+                      "connection": {
+                        "name": "@parameters('$connections')['teams']['connectionId']"
+                      }
+                    },
+                    "path": "/beta/teams/conversation/message/poster/Flow bot/location/@{encodeURIComponent('Channel')}",
+                    "body": {
+                      "recipient": {
+                        "groupId": "<your-teams-group-id>",
+                        "channelId": "19:32df97df94214adfa36ab24db8a1a9dc@thread.tacv2"
+                      },
+                      "messageBody": "<h2>🚨 APIM 에러 알림 - 상세 분석</h2><h3>📊 에러 통계</h3><ul><li><strong>🔴 총 에러:</strong> @{outputs('Compose_Error_Summary')['TotalErrors']} 건</li><li><strong>📅 탐지 시간:</strong> @{formatDateTime(outputs('Compose_Error_Summary')['DetectionTimeKST'], 'yyyy-MM-dd HH:mm:ss')} KST</li><li><strong>⏱️ 분석 기간:</strong> 최근 5분</li></ul><h3>🔍 최근 에러 샘플</h3><table border='1' cellpadding='8'><tr><th>시간(KST)</th><th>코드</th><th>URL</th><th>Client</th></tr>@{join(take(select(body('Query_APIM_Logs')?['tables']?[0]?['rows'], concat('<tr><td>', string(item()[0]), '</td><td><strong>', string(item()[1]), '</strong></td><td>', string(item()[2]), '</td><td>', string(item()[3]), '</td></tr>')), 3), '')}</table><h3>🔗 상세 분석 링크</h3><ul><li><a href='@{outputs('Compose_Error_Summary')['PortalQueryLink']}'>📊 Log Analytics 쿼리 결과</a></li><li><a href='@{outputs('Compose_Error_Summary')['ApimPortalLink']}'>🌐 APIM 리소스</a></li><li><a href='@{outputs('Compose_Error_Summary')['ApimMetricsLink']}'>📈 메트릭 대시보드</a></li></ul>"
+                    },
+                    "method": "post"
+                  },
+                  "runAfter": {
+                    "Compose_Error_Summary": [
+                      "Succeeded"
+                    ]
+                  }
+                },
+                "Create_DevOps_Work_Item_HTTP": {
+                  "type": "Http",
+                  "inputs": {
+                    "method": "POST",
+                    "uri": "https://dev.azure.com/azure-mvp/prj-ticketGEN-demo-20260103/_apis/wit/workitems/$Issue?api-version=7.0",
+                    "headers": {
+                      "Content-Type": "application/json-patch+json"
+                    },
+                    "authentication": {
+                      "type": "ManagedServiceIdentity"
+                    },
+                    "body": [
+                      {
+                        "op": "add",
+                        "path": "/fields/System.Title",
+                        "value": "🚨 APIM 에러 감지 - @{outputs('Compose_Error_Summary')['TotalErrors']}건 (@{formatDateTime(outputs('Compose_Error_Summary')['DetectionTimeKST'], 'MM-dd HH:mm')})"
+                      },
+                      {
+                        "op": "add",
+                        "path": "/fields/System.Description",
+                        "value": "<h2>🔴 APIM 에러 알림 - 상세 분석</h2><h3>📊 에러 통계</h3><table border='1' cellpadding='8'><tr><th>항목</th><th>값</th></tr><tr><td><b>🔴 총 에러 수</b></td><td>@{outputs('Compose_Error_Summary')['TotalErrors']} 건</td></tr><tr><td><b>📅 탐지 시간 (KST)</b></td><td>@{formatDateTime(outputs('Compose_Error_Summary')['DetectionTimeKST'], 'yyyy-MM-dd HH:mm:ss')}</td></tr><tr><td><b>⏱️ 분석 기간</b></td><td>최근 5분</td></tr></table><h3>🔍 첫 번째 에러 상세</h3><table border='1' cellpadding='8'><tr><th>항목</th><th>값</th></tr><tr><td><b>🕐 발생 시간</b></td><td>@{outputs('Compose_Error_Summary')['FirstErrorTime']}</td></tr><tr><td><b>📛 Response Code</b></td><td><strong>@{outputs('Compose_Error_Summary')['FirstErrorCode']}</strong></td></tr><tr><td><b>🌐 URL</b></td><td>@{outputs('Compose_Error_Summary')['FirstErrorUrl']}</td></tr><tr><td><b>💻 Client IP</b></td><td>@{outputs('Compose_Error_Summary')['FirstErrorClient']}</td></tr><tr><td><b>❌ Error Message</b></td><td>@{outputs('Compose_Error_Summary')['FirstErrorMessage']}</td></tr></table><h3>🔗 상세 분석 링크</h3><ul><li><a href='@{outputs('Compose_Error_Summary')['PortalQueryLink']}'>📊 Log Analytics 전체 쿼리 결과</a></li><li><a href='@{outputs('Compose_Error_Summary')['ApimPortalLink']}'>🌐 APIM 리소스 관리</a></li><li><a href='@{outputs('Compose_Error_Summary')['ApimMetricsLink']}'>📈 APIM 메트릭 대시보드</a></li></ul>"
+                      },
+                      {
+                        "op": "add",
+                        "path": "/fields/System.AssignedTo",
+                        "value": "azure-mvp@zerobig.kr"
+                      },
+                      {
+                        "op": "add",
+                        "path": "/fields/Microsoft.VSTS.Common.Priority",
+                        "value": 2
+                      },
+                      {
+                        "op": "add",
+                        "path": "/fields/Microsoft.VSTS.Common.Severity",
+                        "value": "2 - High"
+                      }
+                    ]
+                  },
+                  "runAfter": {
+                    "Send_Enhanced_Email": [
+                      "Succeeded"
+                    ]
+                  }
+                }
+              },
+              "expression": {
+                "and": [
+                  {
+                    "greater": [
+                      "@length(body('Query_APIM_Logs')?['tables']?[0]?['rows'])",
+                      0
+                    ]
+                  }
+                ]
+              },
+              "runAfter": {
+                "Query_APIM_Logs": [
+                  "Succeeded"
+                ]
+              }
+            }
+          },
+          "triggers": {
+            "Recurrence": {
+              "recurrence": {
+                "frequency": "Day",
+                "interval": 1,
+                "timeZone": "Korea Standard Time",
+                "schedule": {
+                  "hours": [
+                    "7"
+                  ],
+                  "minutes": [
+                    0
+                  ]
+                }
+              },
+              "type": "Recurrence"
+            },
+            "manual": {
+              "type": "Request",
+              "kind": "Http",
+              "inputs": {
+                "schema": {}
+              }
+            }
+          },
+          "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+          "contentVersion": "1.0.0.0"
+        },
+        "state": "Enabled",
+        "parameters": {
+          "$connections": {
+            "value": {
+              "outlook": {
+                "connectionName": "outlook",
+                "id": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', parameters('location'), '/managedApis/office365')]",
+                "connectionId": "[resourceId('Microsoft.Web/connections', 'outlook')]"
+              },
+              "visualstudioteamservices": {
+                "connectionName": "visualstudioteamservices",
+                "id": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', parameters('location'), '/managedApis/visualstudioteamservices')]",
+                "connectionId": "[resourceId('Microsoft.Web/connections', 'visualstudioteamservices')]"
+              },
+              "teams": {
+                "connectionName": "teams",
+                "id": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', parameters('location'), '/managedApis/teams')]",
+                "connectionId": "[resourceId('Microsoft.Web/connections', 'teams')]"
+              }
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Web/connections', 'teams')]",
+        "[resourceId('Microsoft.Web/connections', 'outlook')]",
+        "[resourceId('Microsoft.Web/connections', 'visualstudioteamservices')]"
+      ],
+      "apiVersion": "2019-05-01",
+      "name": "[parameters('logicAppName')]",
+      "identity": {
+        "type": "SystemAssigned"
+      }
+    }
+  ],
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0"
+}

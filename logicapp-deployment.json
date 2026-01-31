@@ -1,0 +1,289 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "description": "APIM Monitoring Logic App - Azure SecOps Automation Demo",
+    "author": "ZEROBIG",
+    "lastUpdated": "2026-01-04"
+  },
+  "parameters": {
+    "logicAppName": {
+      "type": "string",
+      "defaultValue": "logicapp-apim-aoai-monitoring",
+      "metadata": { "description": "Logic App resource name" }
+    },
+    "location": {
+      "type": "string",
+      "defaultValue": "eastus",
+      "metadata": { "description": "Azure region for resources" }
+    },
+    "lawWorkspaceId": {
+      "type": "string",
+      "metadata": { "description": "Log Analytics Workspace ID (GUID)" }
+    },
+    "devOpsOrganization": {
+      "type": "string",
+      "defaultValue": "azure-mvp",
+      "metadata": { "description": "Azure DevOps organization name" }
+    },
+    "devOpsProject": {
+      "type": "string",
+      "defaultValue": "prj-ticketGEN-demo-20260103",
+      "metadata": { "description": "Azure DevOps project name" }
+    },
+    "devOpsAssignee": {
+      "type": "string",
+      "defaultValue": "azure-mvp@zerobig.kr",
+      "metadata": { "description": "DevOps work item assignee email" }
+    },
+    "emailRecipient": {
+      "type": "string",
+      "defaultValue": "azure-mvp@zerobig.kr",
+      "metadata": { "description": "Email recipient for notifications" }
+    },
+    "teamsGroupId": {
+      "type": "string",
+      "defaultValue": "<your-teams-group-id>",
+      "metadata": { "description": "Microsoft Teams group ID" }
+    },
+    "teamsChannelId": {
+      "type": "string",
+      "defaultValue": "19:32df97df94214adfa36ab24db8a1a9dc@thread.tacv2",
+      "metadata": { "description": "Microsoft Teams channel ID" }
+    },
+    "scheduleTimeZone": {
+      "type": "string",
+      "defaultValue": "Korea Standard Time",
+      "metadata": { "description": "Schedule time zone" }
+    },
+    "scheduleHour": {
+      "type": "int",
+      "defaultValue": 7,
+      "metadata": { "description": "Schedule hour (0-23)" }
+    },
+    "scheduleMinute": {
+      "type": "int",
+      "defaultValue": 0,
+      "metadata": { "description": "Schedule minute (0-59)" }
+    },
+    "devOpsPatToken": {
+      "type": "securestring",
+      "metadata": { "description": "Azure DevOps PAT token for work item creation" }
+    }
+  },
+  "variables": {
+    "outlookConnectionName": "outlook",
+    "teamsConnectionName": "teams",
+    "workflowDefinition": {
+      "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+      "contentVersion": "1.0.0.0",
+      "parameters": {
+        "$connections": {
+          "defaultValue": {},
+          "type": "Object"
+        }
+      },
+      "triggers": {
+        "Recurrence": {
+          "recurrence": {
+            "frequency": "Day",
+            "interval": 1,
+            "schedule": {
+              "hours": ["[parameters('scheduleHour')]"],
+              "minutes": "[parameters('scheduleMinute')]"
+            },
+            "timeZone": "[parameters('scheduleTimeZone')]"
+          },
+          "type": "Recurrence"
+        }
+      },
+      "actions": {
+        "Query_APIM_Errors": {
+          "runAfter": {},
+          "type": "Http",
+          "inputs": {
+            "method": "POST",
+            "uri": "[concat('https://api.loganalytics.io/v1/workspaces/', parameters('lawWorkspaceId'), '/query')]",
+            "body": {
+              "query": "ApiManagementGatewayLogs | where TimeGenerated > ago(24h) | where ResponseCode >= 400 | extend Category = case(ResponseCode >= 500, 'Server Error', ResponseCode == 404, 'Not Found', ResponseCode == 401 or ResponseCode == 403, 'Auth Error', ResponseCode == 429, 'Rate Limit', 'Client Error') | summarize Count=count() by Category, ResponseCode | order by Count desc"
+            },
+            "authentication": {
+              "type": "ManagedServiceIdentity",
+              "audience": "https://api.loganalytics.io"
+            }
+          }
+        },
+        "Parse_Query_Result": {
+          "runAfter": { "Query_APIM_Errors": ["Succeeded"] },
+          "type": "ParseJson",
+          "inputs": {
+            "content": "@body('Query_APIM_Errors')",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "tables": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "name": { "type": "string" },
+                      "columns": { "type": "array" },
+                      "rows": { "type": "array" }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "Build_Error_Summary": {
+          "runAfter": { "Parse_Query_Result": ["Succeeded"] },
+          "type": "Select",
+          "inputs": {
+            "from": "@body('Parse_Query_Result')?['tables']?[0]?['rows']",
+            "select": {
+              "Category": "@item()[0]",
+              "ResponseCode": "@item()[1]",
+              "Count": "@item()[2]"
+            }
+          }
+        },
+        "Create_HTML_Table": {
+          "runAfter": { "Build_Error_Summary": ["Succeeded"] },
+          "type": "Table",
+          "inputs": {
+            "from": "@body('Build_Error_Summary')",
+            "format": "HTML"
+          }
+        },
+        "Set_Total_Errors": {
+          "runAfter": { "Create_HTML_Table": ["Succeeded"] },
+          "type": "Compose",
+          "inputs": "@length(body('Build_Error_Summary'))"
+        },
+        "Send_an_email_(V2)": {
+          "runAfter": { "Set_Total_Errors": ["Succeeded"] },
+          "type": "ApiConnection",
+          "inputs": {
+            "host": {
+              "connection": {
+                "name": "@parameters('$connections')['outlook']['connectionId']"
+              }
+            },
+            "method": "post",
+            "path": "/v2/Mail",
+            "body": {
+              "To": "[parameters('emailRecipient')]",
+              "Subject": "[AUTO] APIM API Error Report - @{outputs('Set_Total_Errors')} errors detected",
+              "Body": "<html><body><h2>&#128680; APIM API Error Report</h2><p><b>Resource:</b> zbho-dw9-apim</p><p><b>Period:</b> Last 24 hours</p><p><b>Report Time:</b> @{convertTimeZone(utcNow(), 'UTC', 'Korea Standard Time', 'yyyy-MM-dd HH:mm:ss')} KST</p><hr/><h3>&#128202; Error Summary</h3>@{body('Create_HTML_Table')}<hr/><h3>&#128279; Quick Links</h3><ul><li><a href=\"https://portal.azure.com/#@zerobig.kr/resource/subscriptions/<your-subscription-id>/resourceGroups/RG-ZBHO-DW9-APIM-AOAI-DEMO/providers/Microsoft.ApiManagement/service/zbho-dw9-apim/overview\">APIM Dashboard</a></li><li><a href=\"https://portal.azure.com/#@zerobig.kr/resource/subscriptions/<your-subscription-id>/resourceGroups/RG-ZBHO-DW9-APIM-AOAI-DEMO/providers/Microsoft.OperationalInsights/workspaces/zbho-dw9-law/logs\">Log Analytics</a></li></ul></body></html>",
+              "Importance": "High"
+            }
+          }
+        },
+        "Post_Card_to_Teams": {
+          "runAfter": { "Set_Total_Errors": ["Succeeded"] },
+          "type": "ApiConnection",
+          "inputs": {
+            "host": {
+              "connection": {
+                "name": "@parameters('$connections')['teams']['connectionId']"
+              }
+            },
+            "method": "post",
+            "path": "/beta/teams/conversation/message/poster/Flow bot/location/@{encodeURIComponent('Channel')}",
+            "body": {
+              "recipient": {
+                "groupId": "[parameters('teamsGroupId')]",
+                "channelId": "[parameters('teamsChannelId')]"
+              },
+              "messageBody": "<h2>&#128680; APIM API Error Report</h2><p><b>Resource:</b> zbho-dw9-apim</p><p><b>Period:</b> Last 24 hours</p><p><b>Report Time:</b> @{convertTimeZone(utcNow(), 'UTC', 'Korea Standard Time', 'yyyy-MM-dd HH:mm:ss')} KST</p><hr/><h3>&#128202; Error Summary</h3>@{body('Create_HTML_Table')}<hr/><h3>&#128279; Quick Links</h3><ul><li><a href=\"https://portal.azure.com/#@zerobig.kr/resource/subscriptions/<your-subscription-id>/resourceGroups/RG-ZBHO-DW9-APIM-AOAI-DEMO/providers/Microsoft.ApiManagement/service/zbho-dw9-apim/overview\">APIM Dashboard</a></li><li><a href=\"https://portal.azure.com/#@zerobig.kr/resource/subscriptions/<your-subscription-id>/resourceGroups/RG-ZBHO-DW9-APIM-AOAI-DEMO/providers/Microsoft.OperationalInsights/workspaces/zbho-dw9-law/logs\">Log Analytics</a></li></ul>"
+            }
+          }
+        },
+        "Create_Work_Item": {
+          "runAfter": { "Send_an_email_(V2)": ["Succeeded"] },
+          "type": "Http",
+          "inputs": {
+            "method": "POST",
+            "uri": "[concat('https://dev.azure.com/', parameters('devOpsOrganization'), '/', parameters('devOpsProject'), '/_apis/wit/workitems/$Issue?api-version=7.0')]",
+            "headers": {
+              "Content-Type": "application/json-patch+json"
+            },
+            "authentication": {
+              "type": "Basic",
+              "username": "pat",
+              "password": "[parameters('devOpsPatToken')]"
+            },
+            "body": [
+              {
+                "op": "add",
+                "path": "/fields/System.Title",
+                "value": "[AUTO] APIM Error Detected - @{outputs('Set_Total_Errors')} errors (@{convertTimeZone(utcNow(), 'UTC', 'Korea Standard Time', 'yyyy-MM-dd HH:mm')})"
+              },
+              {
+                "op": "add",
+                "path": "/fields/System.Description",
+                "value": "<h2>&#128680; APIM API Error Report</h2><p><b>Resource:</b> zbho-dw9-apim</p><p><b>Period:</b> Last 24 hours</p><p><b>Report Time:</b> @{convertTimeZone(utcNow(), 'UTC', 'Korea Standard Time', 'yyyy-MM-dd HH:mm:ss')} KST</p><hr/><h3>&#128202; Error Summary</h3>@{body('Create_HTML_Table')}<hr/><h3>&#128279; Quick Links</h3><ul><li><a href=\"https://portal.azure.com/#@zerobig.kr/resource/subscriptions/<your-subscription-id>/resourceGroups/RG-ZBHO-DW9-APIM-AOAI-DEMO/providers/Microsoft.ApiManagement/service/zbho-dw9-apim/overview\">APIM Dashboard</a></li><li><a href=\"https://portal.azure.com/#@zerobig.kr/resource/subscriptions/<your-subscription-id>/resourceGroups/RG-ZBHO-DW9-APIM-AOAI-DEMO/providers/Microsoft.OperationalInsights/workspaces/zbho-dw9-law/logs\">Log Analytics</a></li></ul>"
+              },
+              {
+                "op": "add",
+                "path": "/fields/Microsoft.VSTS.Common.Priority",
+                "value": 2
+              },
+              {
+                "op": "add",
+                "path": "/fields/System.AssignedTo",
+                "value": "[parameters('devOpsAssignee')]"
+              }
+            ]
+          }
+        }
+      }
+    }
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Logic/workflows",
+      "apiVersion": "2019-05-01",
+      "name": "[parameters('logicAppName')]",
+      "location": "[parameters('location')]",
+      "identity": {
+        "type": "SystemAssigned"
+      },
+      "properties": {
+        "state": "Enabled",
+        "definition": "[variables('workflowDefinition')]",
+        "parameters": {
+          "$connections": {
+            "value": {
+              "outlook": {
+                "connectionId": "[resourceId('Microsoft.Web/connections', variables('outlookConnectionName'))]",
+                "connectionName": "[variables('outlookConnectionName')]",
+                "id": "[concat(subscription().id, '/providers/Microsoft.Web/locations/', parameters('location'), '/managedApis/office365')]"
+              },
+              "teams": {
+                "connectionId": "[resourceId('Microsoft.Web/connections', variables('teamsConnectionName'))]",
+                "connectionName": "[variables('teamsConnectionName')]",
+                "id": "[concat(subscription().id, '/providers/Microsoft.Web/locations/', parameters('location'), '/managedApis/teams')]"
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "outputs": {
+    "logicAppId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.Logic/workflows', parameters('logicAppName'))]"
+    },
+    "logicAppName": {
+      "type": "string",
+      "value": "[parameters('logicAppName')]"
+    },
+    "managedIdentityPrincipalId": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Logic/workflows', parameters('logicAppName')), '2019-05-01', 'Full').identity.principalId]"
+    }
+  }
+}
